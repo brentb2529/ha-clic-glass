@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to CLiC HC-108",
-        "description": "Enter the IP address or hostname of the CLiC HC-108 Network Controller on your local network. Default credentials are admin / admin.",
+        "description": "Enter the IP address or hostname of the CLiC HC-108 Network Controller on your local network. Auth fields are optional — try without credentials first (default admin/admin if required).",
         "data": {
           "host": "Host or IP address",
           "port": "Port",
@@ -13,14 +13,15 @@
         },
         "data_description": {
           "host": "The IP address or hostname of the HC-108 (shown on its front-panel Settings tab).",
-          "token": "Bearer token if your firmware requires API token auth.",
-          "username": "HTTP Basic Auth username. Leave blank if not required.",
-          "password": "HTTP Basic Auth password. Leave blank if not required."
+          "port": "HTTP port of the HC-108 web API. Leave at 80 unless your network routes it differently.",
+          "token": "Bearer token if your firmware requires API token auth. Leave blank if not required.",
+          "username": "HTTP Basic Auth username. Leave blank if not required (default: admin).",
+          "password": "HTTP Basic Auth password. Leave blank if not required (default: admin)."
         }
       },
       "channels": {
         "title": "Name your glass zones",
-        "description": "Optionally give each of the {channel_count} glass output channels a friendly name. These become the device names in Home Assistant.",
+        "description": "Give each of the {channel_count} glass output channels a friendly name. These become the device names in Home Assistant. You can rename them later in the integration options.",
         "data": {
           "channel_1": "Channel 1 name",
           "channel_2": "Channel 2 name",
@@ -30,23 +31,68 @@
           "channel_6": "Channel 6 name",
           "channel_7": "Channel 7 name",
           "channel_8": "Channel 8 name"
+        },
+        "data_description": {
+          "channel_1": "Friendly name for glass zone 1 (e.g. Master Bath, Office Partition).",
+          "channel_2": "Friendly name for glass zone 2.",
+          "channel_3": "Friendly name for glass zone 3.",
+          "channel_4": "Friendly name for glass zone 4.",
+          "channel_5": "Friendly name for glass zone 5.",
+          "channel_6": "Friendly name for glass zone 6.",
+          "channel_7": "Friendly name for glass zone 7.",
+          "channel_8": "Friendly name for glass zone 8."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate CLiC HC-108",
+        "description": "The HC-108 at {host} is rejecting the saved credentials. Enter updated credentials below. Leave fields blank if no authentication is required.",
+        "data": {
+          "token": "API token (optional)",
+          "username": "Username (optional)",
+          "password": "Password (optional)"
+        },
+        "data_description": {
+          "token": "Bearer token if your firmware requires API token auth. Leave blank if not required.",
+          "username": "HTTP Basic Auth username (default: admin). Leave blank if not required.",
+          "password": "HTTP Basic Auth password (default: admin). Leave blank if not required."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure CLiC HC-108 connection",
+        "description": "Update the host, port, or credentials for this HC-108 controller. Your existing zone names and automations will be preserved.",
+        "data": {
+          "host": "Host or IP address",
+          "port": "Port",
+          "token": "API token (optional)",
+          "username": "Username (optional)",
+          "password": "Password (optional)"
+        },
+        "data_description": {
+          "host": "The IP address or hostname of the HC-108.",
+          "port": "HTTP port of the HC-108 web API. Leave at 80 unless your network routes it differently.",
+          "token": "Bearer token if your firmware requires API token auth. Leave blank if not required.",
+          "username": "HTTP Basic Auth username. Leave blank if not required.",
+          "password": "HTTP Basic Auth password. Leave blank if not required."
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to the HC-108. Check the host/IP and that the controller is powered on and reachable.",
-      "invalid_auth": "The HC-108 rejected the provided credentials. Check username/password or API token.",
+      "invalid_auth": "The HC-108 rejected the provided credentials. Check username/password or API token. Default credentials are admin / admin.",
       "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
     },
     "abort": {
-      "already_configured": "This HC-108 (MAC: {unique_id}) is already configured. Its connection details have been updated."
+      "already_configured": "This HC-108 (MAC: {unique_id}) is already configured. Its connection details have been updated.",
+      "reauth_successful": "Credentials updated — the integration has been reloaded successfully.",
+      "reconfigure_successful": "Connection settings updated and the integration has been reloaded.",
+      "wrong_device": "The controller at the new address has a different MAC address. Use 'Add Integration' to add a second HC-108 controller."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Rename glass zones",
-        "description": "Update the friendly names for each glass channel.",
+        "description": "Update the friendly names for each glass channel. Changes take effect immediately.",
         "data": {
           "channel_1": "Channel 1 name",
           "channel_2": "Channel 2 name",
@@ -56,6 +102,16 @@
           "channel_6": "Channel 6 name",
           "channel_7": "Channel 7 name",
           "channel_8": "Channel 8 name"
+        },
+        "data_description": {
+          "channel_1": "Friendly name for glass zone 1 (e.g. Master Bath, Office Partition).",
+          "channel_2": "Friendly name for glass zone 2.",
+          "channel_3": "Friendly name for glass zone 3.",
+          "channel_4": "Friendly name for glass zone 4.",
+          "channel_5": "Friendly name for glass zone 5.",
+          "channel_6": "Friendly name for glass zone 6.",
+          "channel_7": "Friendly name for glass zone 7.",
+          "channel_8": "Friendly name for glass zone 8."
         }
       }
     }

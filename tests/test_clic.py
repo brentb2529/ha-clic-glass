@@ -9,7 +9,9 @@ from aiohttp.test_utils import TestServer
 
 from homeassistant.const import (
     CONF_HOST,
+    CONF_PASSWORD,
     CONF_PORT,
+    CONF_USERNAME,
     STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
@@ -17,7 +19,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.clic.const import CONF_CHANNELS, DOMAIN
+from custom_components.clic.const import CONF_CHANNELS, CONF_TOKEN, DOMAIN
 from fake.server import FakeState
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -471,3 +473,228 @@ async def test_setup_survives_with_no_route_discovery(
         s for s in hass.states.async_entity_ids("switch") if "all_glass_private" not in s
     ]
     assert len(glass) == 4
+
+
+# ---------------------------------------------------------------------------
+# Reauth flow
+# ---------------------------------------------------------------------------
+
+
+async def test_reauth_flow_success(
+    hass: HomeAssistant, fake_server: TestServer
+) -> None:
+    """Reauth flow accepts new credentials and reloads the entry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={**_entry_data(fake_server), CONF_USERNAME: "old", CONF_PASSWORD: "wrong"},
+        unique_id="F8:DC:00:00:00:01",
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reauth", "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reauth_confirm"
+
+    # Provide empty credentials (the fake server doesn't require auth).
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_USERNAME: "", CONF_PASSWORD: ""},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reauth_successful"
+
+
+async def test_reauth_flow_invalid_credentials(
+    hass: HomeAssistant, fake_server: TestServer
+) -> None:
+    """Reauth form stays open and shows invalid_auth when the device rejects credentials."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer as TS
+
+    # Build a fake server that always returns 401.
+    async def always_401(request: web.Request) -> web.Response:
+        return web.Response(status=401)
+
+    auth_app = web.Application()
+    auth_app.router.add_get("/api/v1/info", always_401)
+    auth_server = TS(auth_app, host="127.0.0.1")
+    await auth_server.start_server()
+
+    try:
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={CONF_HOST: auth_server.host, CONF_PORT: auth_server.port},
+            unique_id="F8:DC:00:00:00:AA",
+            options={},
+        )
+        entry.add_to_hass(hass)
+
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "reauth", "entry_id": entry.entry_id},
+            data=entry.data,
+        )
+        assert result["step_id"] == "reauth_confirm"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_TOKEN: "bad-token"},
+        )
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+        assert result["errors"] == {"base": "invalid_auth"}
+    finally:
+        await auth_server.close()
+
+
+async def test_reauth_flow_cannot_connect(
+    hass: HomeAssistant,
+) -> None:
+    """Reauth form shows cannot_connect when the device is unreachable."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "127.0.0.1", CONF_PORT: 1},
+        unique_id="F8:DC:00:00:00:BB",
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reauth", "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+    assert result["step_id"] == "reauth_confirm"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+# ---------------------------------------------------------------------------
+# Reconfigure flow
+# ---------------------------------------------------------------------------
+
+
+async def test_reconfigure_flow_success(
+    hass: HomeAssistant, fake_server: TestServer
+) -> None:
+    """Reconfigure flow updates host/port/credentials and reloads the entry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "192.0.2.1", CONF_PORT: 9999},
+        unique_id="F8:DC:00:00:00:01",
+        options={CONF_CHANNELS: {"1": "Room A", "2": "Room B"}},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reconfigure", "entry_id": entry.entry_id},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+
+    # Provide valid new host/port pointing at the fake server.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: fake_server.host, CONF_PORT: fake_server.port},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+
+    # Entry data updated; zone names preserved in options.
+    assert entry.data[CONF_HOST] == fake_server.host
+    assert entry.data[CONF_PORT] == fake_server.port
+    assert entry.options[CONF_CHANNELS]["1"] == "Room A"
+
+
+async def test_reconfigure_flow_cannot_connect(
+    hass: HomeAssistant,
+) -> None:
+    """Reconfigure form shows cannot_connect when the new host is unreachable."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "192.0.2.1", CONF_PORT: 9999},
+        unique_id="F8:DC:00:00:00:01",
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reconfigure", "entry_id": entry.entry_id},
+    )
+    assert result["step_id"] == "reconfigure"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: "127.0.0.1", CONF_PORT: 1},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_reconfigure_preserves_zone_names(
+    hass: HomeAssistant, fake_server: TestServer
+) -> None:
+    """Reconfigure updates connection only; CONF_CHANNELS options are untouched."""
+    original_channels = {"1": "Master Bath", "2": "Office", "3": "Bedroom", "4": "Hallway"}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "192.0.2.1", CONF_PORT: 9999},
+        unique_id="F8:DC:00:00:00:01",
+        options={CONF_CHANNELS: original_channels},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reconfigure", "entry_id": entry.entry_id},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: fake_server.host, CONF_PORT: fake_server.port},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+
+    # Zone names must not be touched.
+    assert entry.options[CONF_CHANNELS] == original_channels
+
+
+async def test_reconfigure_wrong_device(
+    hass: HomeAssistant, fake_server: TestServer
+) -> None:
+    """Reconfigure aborts with wrong_device when the controller MAC changes."""
+    # The entry has unique_id = MAC:02; the fake server returns MAC:01.
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={CONF_HOST: "192.0.2.1", CONF_PORT: 9999},
+        unique_id="F8:DC:00:00:00:02",
+        options={},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": "reconfigure", "entry_id": entry.entry_id},
+    )
+    assert result["step_id"] == "reconfigure"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_HOST: fake_server.host, CONF_PORT: fake_server.port},
+    )
+    # fake server returns MAC:01, entry has MAC:02 -> mismatch -> abort
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "wrong_device"

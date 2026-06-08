@@ -66,8 +66,8 @@ rules:
     status: done
     comment: CoordinatorEntity.available returns False on failed poll; channel availability also checked.
   reauthentication-flow:
-    status: todo
-    comment: ConfigEntryAuthFailed raised; reauth step not yet implemented (needs real auth model from hardware).
+    status: done
+    comment: async_step_reauth + async_step_reauth_confirm implemented; triggered by ConfigEntryAuthFailed from coordinator.
   reconfiguration-flow:
-    status: todo
-    comment: Not yet implemented; host update handled via _abort_if_unique_id_configured updates dict.
+    status: done
+    comment: async_step_reconfigure implemented; preserves entity history and zone names while updating host/port/credentials.

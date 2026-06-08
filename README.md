@@ -45,38 +45,76 @@ Default web UI credentials: **admin / admin** (documented in the manual).
 
 ---
 
-## Installation
+## Install & Setup
 
-### Via HACS (recommended)
+Everything is done through the Home Assistant UI — no YAML editing, no
+configuration files, no manual entry IDs required.
+
+### Step 1 — Install the integration
+
+**Via HACS (recommended)**
 
 1. Open HACS in Home Assistant.
 2. Click the three-dot menu → **Custom repositories**.
-3. Add this repository URL, category **Integration**.
-4. Search for "Cardinal CLiC" and install.
+3. Paste this repository URL, category **Integration**, and click **Add**.
+4. Search for "Cardinal CLiC" and click **Download**.
 5. Restart Home Assistant.
 
-### Manual
+**Manual install**
 
-1. Copy `custom_components/clic/` to your HA `config/custom_components/clic/`.
+1. Copy the `custom_components/clic/` folder to
+   `<your HA config>/custom_components/clic/`.
 2. Restart Home Assistant.
 
 ---
 
-## Setup
+### Step 2 — Add the HC-108 controller
 
-1. Go to **Settings → Devices & Services → Add Integration**.
-2. Search for "Cardinal CLiC".
-3. Enter the HC-108's **IP address** (shown on its front-panel Settings tab).
-   Port defaults to 80. Credentials (username/password or API token) are
-   optional — try without first.
-4. The integration reads the channel count from the controller. Name each
-   glass zone (e.g. "Master Bath", "Office Partition") — these become device
-   names in HA.
-5. Done. The integration creates one hub device (the HC-108) and one child
-   device per glass channel.
+1. Go to **Settings → Devices & Services** and click **Add Integration**.
+2. Search for **Cardinal CLiC** and click it.
+3. Enter your HC-108's **IP address or hostname** (find it on the controller's
+   front-panel Settings tab, or your router's DHCP table).
+   - Port: leave at **80** unless you've changed it.
+   - Auth fields (username, password, API token) are **optional** — leave them
+     blank first. If the controller is password-protected, the default
+     credentials are **admin / admin**.
+4. Click **Submit**. The integration connects to the controller and detects
+   how many glass channels are installed.
+5. **Name your glass zones.** Give each channel a friendly name
+   (e.g. "Master Bath", "Office Partition"). These become the device names in
+   Home Assistant. You can rename them at any time later.
+6. Click **Submit**. Done.
 
-**Multiple HC-108 controllers** are fully supported: repeat setup for each
-controller. Each entry is keyed by the controller's MAC address.
+The integration creates one hub device for the HC-108 controller and one
+child device for each glass zone.
+
+**Multiple HC-108 controllers** are fully supported — repeat the steps above
+for each controller. Each entry is identified by the controller's MAC address
+so there are no conflicts.
+
+---
+
+### Tip — give your controller a static IP
+
+The HC-108 does not announce itself on the network; you must enter its IP
+address manually. To avoid the IP changing after a router reboot, either:
+- Set a **DHCP reservation** on your router (bind the HC-108's MAC address to
+  a fixed IP), or
+- Assign a **static IP** on the HC-108 itself from its built-in web UI.
+
+The HC-108's MAC address is shown on its front-panel Settings tab and in the
+Home Assistant device registry after setup.
+
+---
+
+### Changing settings after setup
+
+| What you want to do | How |
+|---|---|
+| Rename glass zones | **Settings → Devices & Services → Cardinal CLiC → Configure** |
+| Change host/port or credentials | Three-dot menu on the integration entry → **Reconfigure** |
+| Fix an auth error banner | Click the banner → re-enter credentials |
+| Remove the integration | Three-dot menu → **Delete** |
 
 ---
 
@@ -121,6 +159,18 @@ as the unique ID in HA.
 After setup, click **Configure** on the integration entry to rename glass zones.
 Changes take effect immediately (the entry reloads).
 
+### Reconfiguring the connection
+
+To update the HC-108's IP address, port, or credentials without removing the
+integration (preserving your entity history and automations), use
+**three-dot menu → Reconfigure** on the integration entry.
+
+### Reauthentication
+
+If the HC-108 starts rejecting credentials, Home Assistant will show a
+notification banner. Click the banner to open the reauth form — you can
+update credentials there without re-adding the integration.
+
 ---
 
 ## Removing the integration
@@ -156,11 +206,12 @@ If you have access to a real HC-108:
 ## Known limitations and hardware-verification items
 
 - REST route strings are **assumed** (see API confidence note above). All
-  state-machine logic is correct; only the HTTP paths need verification.
+  state-machine logic is correct; only the HTTP paths need verification once
+  access to a real HC-108 is available.
 - Auth model: the integration supports Bearer token and HTTP Basic Auth. The
-  exact scheme used by the Fog Layer API is unconfirmed; try without auth first.
-- No mDNS/zeroconf auto-discovery (HC-108 does not announce itself).
-- Reauth flow: raises `ConfigEntryAuthFailed` but the reauth step is not yet
-  implemented (needs confirmed auth model from hardware).
+  exact scheme used by the Fog Layer API is unconfirmed; try without auth first
+  (default admin / admin if credentials are required).
+- No mDNS/zeroconf auto-discovery (HC-108 does not announce itself on the
+  network — manual IP entry required).
 - Route self-discovery (`async_discover_routes`) is best-effort; it logs a
   debug message on failure and does not affect integration operation.

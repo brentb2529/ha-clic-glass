@@ -30,6 +30,54 @@ STEP_USER_SCHEMA = vol.Schema(
 )
 
 
+def _build_connect_schema(
+    host: str = "",
+    port: int = DEFAULT_PORT,
+    token: str = "",
+    username: str = "",
+    password: str = "",
+) -> vol.Schema:
+    """Build the connection schema with optional pre-populated defaults."""
+    return vol.Schema(
+        {
+            vol.Required(CONF_HOST, default=host): str,
+            vol.Optional(CONF_PORT, default=port): int,
+            vol.Optional(CONF_TOKEN, default=token): str,
+            vol.Optional(CONF_USERNAME, default=username): str,
+            vol.Optional(CONF_PASSWORD, default=password): str,
+        }
+    )
+
+
+async def _try_connect(
+    hass: Any,
+    user_input: dict[str, Any],
+) -> tuple[ClicDeviceInfo | None, dict[str, str]]:
+    """Attempt to connect to the HC-108.  Returns (device_info, errors)."""
+    errors: dict[str, str] = {}
+    session = async_get_clientsession(hass)
+    client = ClicClient(
+        user_input[CONF_HOST],
+        session,
+        port=user_input.get(CONF_PORT, DEFAULT_PORT),
+        token=user_input.get(CONF_TOKEN) or None,
+        username=user_input.get(CONF_USERNAME) or None,
+        password=user_input.get(CONF_PASSWORD) or None,
+    )
+    try:
+        info = await client.async_get_info()
+    except ClicAuthError:
+        errors["base"] = "invalid_auth"
+        return None, errors
+    except ClicConnectionError:
+        errors["base"] = "cannot_connect"
+        return None, errors
+    except Exception:  # noqa: BLE001
+        errors["base"] = "unknown"
+        return None, errors
+    return info, errors
+
+
 class ClicConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Cardinal CLiC.
 
@@ -53,22 +101,9 @@ class ClicConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step: connect to the HC-108 by host/IP."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            session = async_get_clientsession(self.hass)
-            client = ClicClient(
-                user_input[CONF_HOST],
-                session,
-                port=user_input.get(CONF_PORT, DEFAULT_PORT),
-                token=user_input.get(CONF_TOKEN),
-                username=user_input.get(CONF_USERNAME),
-                password=user_input.get(CONF_PASSWORD),
-            )
-            try:
-                info = await client.async_get_info()
-            except ClicAuthError:
-                errors["base"] = "invalid_auth"
-            except ClicConnectionError:
-                errors["base"] = "cannot_connect"
-            else:
+            info, errors = await _try_connect(self.hass, user_input)
+            if not errors:
+                assert info is not None
                 await self.async_set_unique_id(info.mac)
                 self._abort_if_unique_id_configured(
                     updates={
@@ -96,7 +131,7 @@ class ClicConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             # Build the CONF_CHANNELS mapping: channel_number_str -> name
             channels = {
-                str(i): user_input.get(f"channel_{i}", f"Glass {i}")
+                str(i): user_input.get(f"channel_{i}") or f"Glass {i}"
                 for i in range(1, channel_count + 1)
             }
             host = self._user_input[CONF_HOST]
@@ -114,6 +149,95 @@ class ClicConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="channels",
             data_schema=vol.Schema(schema_fields),
             description_placeholders={"channel_count": str(channel_count)},
+        )
+
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle reauthentication when the HC-108 rejects credentials.
+
+        Triggered automatically by Home Assistant when the coordinator raises
+        ConfigEntryAuthFailed.  The user can update credentials; host/port are
+        pre-filled and read-only in the banner context (the entry stays).
+        """
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show the reauth form and validate new credentials."""
+        reauth_entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            # Merge new credentials on top of the existing entry data so
+            # host/port are preserved.
+            merged = {**reauth_entry.data, **user_input}
+            info, errors = await _try_connect(self.hass, merged)
+            if not errors:
+                self.hass.config_entries.async_update_entry(
+                    reauth_entry, data=merged
+                )
+                await self.hass.config_entries.async_reload(reauth_entry.entry_id)
+                return self.async_abort(reason="reauth_successful")
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(CONF_TOKEN): str,
+                    vol.Optional(CONF_USERNAME): str,
+                    vol.Optional(CONF_PASSWORD): str,
+                }
+            ),
+            description_placeholders={
+                "host": reauth_entry.data.get(CONF_HOST, ""),
+            },
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Allow the user to change host/port/credentials without re-adding.
+
+        This keeps the existing entry (entity IDs, automations, history) intact
+        while updating the connection parameters.
+        """
+        reconfigure_entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            info, errors = await _try_connect(self.hass, user_input)
+            if not errors:
+                assert info is not None
+                # Verify the controller at the new address is the same physical
+                # unit (same MAC). Abort with "wrong_device" if the user
+                # accidentally pointed at a different controller.
+                await self.async_set_unique_id(info.mac, raise_on_progress=False)
+                self._abort_if_unique_id_mismatch(reason="wrong_device")
+                return self.async_update_reload_and_abort(
+                    reconfigure_entry,
+                    data_updates={
+                        CONF_HOST: user_input[CONF_HOST],
+                        CONF_PORT: user_input.get(CONF_PORT, DEFAULT_PORT),
+                        CONF_TOKEN: user_input.get(CONF_TOKEN) or None,
+                        CONF_USERNAME: user_input.get(CONF_USERNAME) or None,
+                        CONF_PASSWORD: user_input.get(CONF_PASSWORD) or None,
+                    },
+                )
+
+        current = reconfigure_entry.data
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_build_connect_schema(
+                host=current.get(CONF_HOST, ""),
+                port=current.get(CONF_PORT, DEFAULT_PORT),
+                token=current.get(CONF_TOKEN, ""),
+                username=current.get(CONF_USERNAME, ""),
+                password=current.get(CONF_PASSWORD, ""),
+            ),
+            errors=errors,
         )
 
     @staticmethod
@@ -142,7 +266,7 @@ class ClicOptionsFlow(OptionsFlow):
 
         if user_input is not None:
             channels = {
-                str(i): user_input.get(f"channel_{i}", f"Glass {i}")
+                str(i): user_input.get(f"channel_{i}") or f"Glass {i}"
                 for i in range(1, channel_count + 1)
             }
             return self.async_create_entry(data={CONF_CHANNELS: channels})
