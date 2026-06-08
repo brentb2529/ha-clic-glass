@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to CLiC HC-108",
+        "description": "Enter the IP address or hostname of the CLiC HC-108 Network Controller. Credentials are optional and depend on your controller firmware.",
+        "data": {
+          "host": "Host or IP address",
+          "port": "Port",
+          "token": "API token (optional)",
+          "username": "Username (optional)",
+          "password": "Password (optional)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the HC-108.",
+      "invalid_auth": "The HC-108 rejected the provided credentials."
+    },
+    "abort": {
+      "already_configured": "This HC-108 is already configured."
+    }
+  },
+  "entity": {
+    "switch": {
+      "glass": {
+        "name": "Glass"
+      },
+      "global_override": {
+        "name": "All glass private (global override)"
+      }
+    },
+    "binary_sensor": {
+      "fault": {
+        "name": "Fault"
+      },
+      "lockout": {
+        "name": "Lockout"
+      }
+    }
+  }
+}

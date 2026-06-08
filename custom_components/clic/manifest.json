@@ -1,0 +1,12 @@
+{
+  "domain": "clic",
+  "name": "Cardinal CLiC Privacy Glass",
+  "version": "0.1.0",
+  "codeowners": ["@bbensten"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://www.clicglass.com",
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "requirements": []
+}
