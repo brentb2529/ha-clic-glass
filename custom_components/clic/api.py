@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+from typing import Any
 
 import aiohttp
 
@@ -47,16 +48,22 @@ _LOGGER = logging.getLogger(__name__)
 DEFAULT_PORT = 80
 DEFAULT_TIMEOUT = 10
 
-# --- ASSUMED endpoint paths (adjust here once the live spec is read) --------
+# --- ASSUMED endpoint paths (adjust here once the live spec is read) ---------
 # The fake server in clic-glass/fake/ implements exactly these paths so tests
 # exercise the same surface. Keep the fake and these constants in lockstep.
-PATH_INFO = "/api/v1/info"  # device info: firmware, channel count, mac
-PATH_STATUS = "/api/v1/status"  # full snapshot: all channels + global override
+#
+# If async_discover_routes() successfully reads the live "API Routes
+# Specifications" page off the device, a ClicClient subclass could patch
+# these at runtime. For now they are module constants — one place to fix.
+PATH_INFO = "/api/v1/info"  # GET device info: firmware, channel count, mac
+PATH_STATUS = "/api/v1/status"  # GET full snapshot: all channels + global override
 PATH_CHANNEL_SET = "/api/v1/channel/{channel}/output"  # POST {"clear": bool}
 PATH_GLOBAL_OVERRIDE = "/api/v1/global_override"  # POST {"active": bool}
 # Per-channel LOCK is an INPUT on the HC-108 (a dry contact wired in the
 # field); it is reported in status but is not settable over the API in the
-# documented model, so there is no SET path for lock. We expose it read-only.
+# documented model, so there is no SET path for lock. Exposed read-only.
+# The "API Routes Specifications" page lives at this URL on the device:
+PATH_API_SPEC = "/api/v1/routes"  # GET spec page (assumed); may be /routes or similar
 # ---------------------------------------------------------------------------
 
 
@@ -70,6 +77,10 @@ class ClicConnectionError(ClicError):
 
 class ClicAuthError(ClicError):
     """Raised when the controller rejects credentials."""
+
+
+class ClicResponseError(ClicError):
+    """Raised when the controller returns an unexpected/malformed response."""
 
 
 @dataclass(slots=True)
@@ -111,6 +122,23 @@ class ClicData:
     global_override: bool
 
 
+def _truthy(value: Any, field: str) -> bool:
+    """Coerce a JSON int/bool/string to bool, tolerating device quirks.
+
+    The HC-108 manual documents these fields as 0/1 integers but we accept
+    native booleans and any truthy string so the client does not break on
+    minor firmware variations.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value.lower() not in ("0", "false", "off", "no", "")
+    _LOGGER.debug("Unexpected type for field %s: %r — treating as falsy", field, value)
+    return False
+
+
 class ClicClient:
     """Thin async HTTP client for one HC-108 controller."""
 
@@ -136,6 +164,11 @@ class ClicClient:
             self._auth = aiohttp.BasicAuth(username, password)
 
     @property
+    def host(self) -> str:
+        """Controller hostname or IP."""
+        return self._host
+
+    @property
     def _base(self) -> str:
         return f"http://{self._host}:{self._port}"
 
@@ -144,7 +177,19 @@ class ClicClient:
             return {"Authorization": f"Bearer {self._token}"}
         return {}
 
-    async def _request(self, method: str, path: str, **kwargs) -> dict:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Execute an HTTP request and return the parsed JSON body.
+
+        Raises:
+            ClicConnectionError: network error, timeout, or non-auth HTTP error.
+            ClicAuthError: HTTP 401 or 403.
+            ClicResponseError: response is not JSON or is not a dict.
+        """
         url = f"{self._base}{path}"
         try:
             async with asyncio.timeout(self._timeout):
@@ -163,15 +208,31 @@ class ClicClient:
         if resp.status >= 400:
             raise ClicConnectionError(f"{url} returned HTTP {resp.status}")
 
-        if resp.content_type == "application/json":
-            return await resp.json()
-        return {}
+        # Parse JSON — tolerate non-JSON content types from embedded web servers
+        # that may send text/html on some firmware versions.
+        try:
+            body = await resp.json(content_type=None)
+        except Exception as err:
+            raise ClicResponseError(
+                f"{url} returned non-JSON response: {err}"
+            ) from err
+
+        if not isinstance(body, dict):
+            raise ClicResponseError(
+                f"{url} returned unexpected JSON type {type(body).__name__!r}"
+            )
+        return body
 
     async def async_get_info(self) -> ClicDeviceInfo:
         """Fetch device identity (used by config flow + device registry)."""
         data = await self._request("GET", PATH_INFO)
+        mac = data.get("mac")
+        if not mac or not isinstance(mac, str):
+            raise ClicResponseError(
+                f"Missing or invalid 'mac' in info response: {data!r}"
+            )
         return ClicDeviceInfo(
-            mac=str(data["mac"]),
+            mac=str(mac).upper(),
             firmware=str(data.get("firmware", "unknown")),
             channel_count=int(data.get("channel_count", 8)),
         )
@@ -179,20 +240,55 @@ class ClicClient:
     async def async_get_data(self) -> ClicData:
         """Fetch a full status snapshot."""
         data = await self._request("GET", PATH_STATUS)
+
+        raw_channels = data.get("channels")
+        if not isinstance(raw_channels, list):
+            raise ClicResponseError(
+                f"Missing or invalid 'channels' list in status response: {data!r}"
+            )
+
         channels: dict[int, ClicChannel] = {}
-        for raw in data["channels"]:
-            ch = int(raw["channel"])
+        for raw in raw_channels:
+            if not isinstance(raw, dict):
+                _LOGGER.warning("Skipping malformed channel entry: %r", raw)
+                continue
+            ch_raw = raw.get("channel")
+            if ch_raw is None:
+                _LOGGER.warning("Skipping channel entry missing 'channel' key: %r", raw)
+                continue
+            try:
+                ch = int(ch_raw)
+            except (TypeError, ValueError):
+                _LOGGER.warning("Skipping channel entry with non-integer channel: %r", raw)
+                continue
+
+            glass_out = raw.get("glass_out_status")
+            change_out = raw.get("change_output")
+            if glass_out is None or change_out is None:
+                _LOGGER.warning(
+                    "Channel %d missing glass_out_status or change_output — skipping", ch
+                )
+                continue
+
             channels[ch] = ClicChannel(
                 channel=ch,
-                clear=bool(raw["glass_out_status"]),
-                requested_clear=bool(raw["change_output"]),
-                lockout=bool(raw.get("lockout_status", False)),
-                trigger=bool(raw.get("trigger_status", False)),
-                global_status=bool(raw.get("global_status", False)),
+                clear=_truthy(glass_out, "glass_out_status"),
+                requested_clear=_truthy(change_out, "change_output"),
+                lockout=_truthy(raw.get("lockout_status", 0), "lockout_status"),
+                trigger=_truthy(raw.get("trigger_status", 0), "trigger_status"),
+                global_status=_truthy(raw.get("global_status", 0), "global_status"),
             )
+
+        if not channels:
+            raise ClicResponseError(
+                "Status response contained no valid channel entries"
+            )
+
         return ClicData(
             channels=channels,
-            global_override=bool(data["global_override"]),
+            global_override=_truthy(
+                data.get("global_override", False), "global_override"
+            ),
         )
 
     async def async_set_channel(self, channel: int, clear: bool) -> None:
@@ -210,3 +306,22 @@ class ClicClient:
             PATH_GLOBAL_OVERRIDE,
             json={"active": active},
         )
+
+    async def async_discover_routes(self) -> dict[str, Any] | None:
+        """Attempt to fetch the device's own API Routes Specification page.
+
+        This is a best-effort, non-blocking call used at setup to self-correct
+        route paths if the device publishes them. Returns the parsed spec dict
+        on success; returns None silently on any failure (wrong path, no page,
+        non-JSON, etc.) so callers can ignore it safely.
+
+        The spec URL is itself assumed (PATH_API_SPEC). If the real HC-108
+        serves the spec at a different path, update PATH_API_SPEC.
+        """
+        try:
+            return await self._request("GET", PATH_API_SPEC)
+        except (ClicError, Exception) as err:  # noqa: BLE001
+            _LOGGER.debug(
+                "Route discovery at %s failed (non-fatal): %s", PATH_API_SPEC, err
+            )
+            return None

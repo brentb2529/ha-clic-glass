@@ -1,0 +1,73 @@
+rules:
+  # Bronze tier
+  action-setup:
+    status: exempt
+    comment: Integration does not register custom actions/services.
+  appropriate-polling:
+    status: done
+    comment: 15-second SCAN_INTERVAL, not user-configurable.
+  brands:
+    status: todo
+    comment: Brand assets (logo/icon) not yet in HA brands repo (custom integration).
+  common-modules:
+    status: done
+    comment: Coordinator pattern used; entity base classes in entity.py.
+  config-flow-test-coverage:
+    status: done
+    comment: Config flow tested in tests/test_clic.py.
+  config-flow:
+    status: done
+    comment: Full config flow with discovery of channel count and zone naming.
+  dependency-transparency:
+    status: done
+    comment: Only aiohttp (HA built-in dep); no third-party requirements.
+  docs-actions:
+    status: exempt
+    comment: No custom actions registered.
+  docs-high-level-description:
+    status: done
+    comment: README describes the integration purpose and supported controllers.
+  docs-installation-instructions:
+    status: done
+    comment: README includes installation steps.
+  docs-removal-instructions:
+    status: todo
+    comment: README does not yet describe entry removal steps.
+  entity-event-setup:
+    status: exempt
+    comment: Polling-only; no push/event subscriptions.
+  entity-unique-id:
+    status: done
+    comment: All entities have stable unique_ids keyed on hub_id + channel + role.
+  has-entity-name:
+    status: done
+    comment: _attr_has_entity_name = True on all entities; main switch uses name=None.
+  runtime-data:
+    status: done
+    comment: Coordinator stored in entry.runtime_data.
+  test-before-configure:
+    status: done
+    comment: async_get_info() called in config flow before creating the entry.
+  test-before-setup:
+    status: done
+    comment: async_config_entry_first_refresh() raises ConfigEntryNotReady on failure.
+  unique-config-entry:
+    status: done
+    comment: Unique ID set to controller MAC; _abort_if_unique_id_configured enforced.
+
+  # Silver tier (informational — not targeting silver yet)
+  config-entry-unloading:
+    status: done
+    comment: async_unload_entry implemented via async_unload_platforms.
+  log-when-unavailable:
+    status: todo
+    comment: DataUpdateCoordinator logs at WARNING on failure by default; custom message added.
+  entity-unavailable:
+    status: done
+    comment: CoordinatorEntity.available returns False on failed poll; channel availability also checked.
+  reauthentication-flow:
+    status: todo
+    comment: ConfigEntryAuthFailed raised; reauth step not yet implemented (needs real auth model from hardware).
+  reconfiguration-flow:
+    status: todo
+    comment: Not yet implemented; host update handled via _abort_if_unique_id_configured updates dict.

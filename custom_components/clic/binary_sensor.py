@@ -6,6 +6,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -33,10 +34,13 @@ class ClicFaultSensor(ClicChannelEntity, BinarySensorEntity):
     Mirrors the HC-108 manual's error semantics (GLASS OUT STATUS != CHANGE
     OUTPUT), which the manual notes "can also indicate an error" -- typically an
     external wiring error / missing panel on that channel.
+
+    PROBLEM device class: on = problem present, off = no problem.
     """
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_translation_key = "fault"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: ClicCoordinator, channel: int) -> None:
         """Initialize."""
@@ -45,7 +49,7 @@ class ClicFaultSensor(ClicChannelEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """Return True when the channel is faulted."""
+        """Return True (problem) when actual output does not match requested."""
         ch = self.coordinator.data.channels.get(self._channel)
         if ch is None:
             return None
@@ -56,13 +60,20 @@ class ClicLockoutSensor(ClicChannelEntity, BinarySensorEntity):
     """Per-channel Local Lockout input state (read-only).
 
     LOCK is a field-wired dry-contact INPUT on the HC-108 that disables
-    switching the channel to Clear. The documented API model reports it but
-    does not expose a way to set it, so it is read-only here. (If a future
-    firmware/API allows commanding lockout, promote this to a guarded switch.)
+    switching the channel to Clear when closed. The documented API model
+    reports it but does not expose a way to set it, so it is read-only here.
+
+    LOCK device class semantics (HA): on = locked, off = unlocked.
+    The HC-108 LOCKOUT STATUS: 1 = lockout active (locked), 0 = inactive.
+    Therefore: is_on = ch.lockout (lockout active -> on -> locked).
+
+    (If a future firmware/API allows commanding lockout, promote this to a
+    guarded switch — but keep the semantics: on = locked.)
     """
 
     _attr_device_class = BinarySensorDeviceClass.LOCK
     _attr_translation_key = "lockout"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: ClicCoordinator, channel: int) -> None:
         """Initialize."""
@@ -71,8 +82,12 @@ class ClicLockoutSensor(ClicChannelEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        """LOCK device class: on = unlocked. Lockout active => locked => off."""
+        """Return True (locked) when the Local Lockout input is active.
+
+        HC-108 LOCKOUT STATUS 1 -> lockout active -> glass cannot go Clear.
+        LOCK device class: on = locked. So is_on = ch.lockout.
+        """
         ch = self.coordinator.data.channels.get(self._channel)
         if ch is None:
             return None
-        return not ch.lockout
+        return ch.lockout

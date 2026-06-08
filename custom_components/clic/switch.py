@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import ClicConfigEntry, ClicCoordinator
@@ -28,10 +28,17 @@ async def async_setup_entry(
 
 
 class ClicGlassSwitch(ClicChannelEntity, SwitchEntity):
-    """A single glass channel. ON = Clear, OFF = Private (real API state)."""
+    """A single glass channel. ON = Clear, OFF = Private (real API state).
 
-    _attr_translation_key = "glass"
-    _attr_name = None  # device name carries the channel identity
+    This is the main feature entity for the per-channel device, so
+    ``_attr_name = None`` and ``has_entity_name = True`` (inherited) mean the
+    entity name equals the device (zone) name — e.g. "Glass 1" or the
+    configured zone name. No redundant per-entity "Glass" label is prepended.
+    """
+
+    # Main feature entity — name equals the device (zone) name.
+    _attr_name = None
+    _attr_icon = "mdi:texture-box"
 
     def __init__(self, coordinator: ClicCoordinator, channel: int) -> None:
         """Initialize."""
@@ -59,10 +66,14 @@ class ClicGlassSwitch(ClicChannelEntity, SwitchEntity):
 
 class ClicGlobalOverrideSwitch(ClicHubEntity, SwitchEntity):
     """Global Override. ON forces all panels to the controller's configured
-    target (default Private) and blocks individual triggers."""
+    target (default Private) and blocks individual triggers.
+
+    This is a configuration-class entity (it affects how the device operates
+    globally, not a normal user action), so entity_category = CONFIG.
+    """
 
     _attr_translation_key = "global_override"
-    _attr_name = "All glass private"
+    _attr_icon = "mdi:lock-outline"
 
     def __init__(self, coordinator: ClicCoordinator) -> None:
         """Initialize."""
@@ -72,6 +83,8 @@ class ClicGlobalOverrideSwitch(ClicHubEntity, SwitchEntity):
     @property
     def is_on(self) -> bool:
         """Return True when global override is active."""
+        if self.coordinator.data is None:
+            return False
         return self.coordinator.data.global_override
 
     async def async_turn_on(self, **kwargs: Any) -> None:
