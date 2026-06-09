@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ipaddress
+import re
 from typing import Any
 
 import voluptuous as vol
@@ -18,6 +20,48 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import DEFAULT_PORT, ClicAuthError, ClicClient, ClicConnectionError, ClicDeviceInfo
 from .const import CONF_CHANNELS, CONF_TOKEN, DOMAIN
+
+# ---------------------------------------------------------------------------
+# Validation helpers
+# ---------------------------------------------------------------------------
+
+# Matches strings that look like dotted-decimal IPs (to route them through
+# ipaddress validation rather than the hostname regex).
+_IP_LIKE_RE = re.compile(r"^\d+(\.\d+){1,3}$")
+
+# Matches plain hostnames and FQDNs.  Strings that look like dotted IPs are
+# NOT tested against this regex — they are handled by ipaddress above.
+_HOSTNAME_RE = re.compile(
+    r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$"
+)
+
+
+def _is_valid_host(host: str) -> bool:
+    """Return True if *host* looks like a valid hostname or IP address.
+
+    Uses ipaddress.ip_address() for strict IP validation (rejects out-of-range
+    octets such as 999.x.x.x).  Strings that look like dotted-decimal addresses
+    are rejected unless they pass ipaddress validation.  Non-IP strings are
+    accepted if they match the hostname regex.
+    """
+    host = host.strip()
+    if not host:
+        return False
+
+    # Try IP validation first.
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+
+    # If it looks like a dotted IP but failed validation, reject it outright
+    # so that 999.999.999.999 is not accepted as a hostname.
+    if _IP_LIKE_RE.match(host):
+        return False
+
+    # Fall through to hostname regex.
+    return bool(_HOSTNAME_RE.match(host))
 
 STEP_USER_SCHEMA = vol.Schema(
     {
@@ -101,7 +145,11 @@ class ClicConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the initial step: connect to the HC-108 by host/IP."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            info, errors = await _try_connect(self.hass, user_input)
+            host = user_input.get(CONF_HOST, "").strip()
+            if not _is_valid_host(host):
+                errors[CONF_HOST] = "invalid_host"
+            else:
+                info, errors = await _try_connect(self.hass, user_input)
             if not errors:
                 assert info is not None
                 await self.async_set_unique_id(info.mac)
@@ -208,7 +256,11 @@ class ClicConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            info, errors = await _try_connect(self.hass, user_input)
+            host = user_input.get(CONF_HOST, "").strip()
+            if not _is_valid_host(host):
+                errors[CONF_HOST] = "invalid_host"
+            else:
+                info, errors = await _try_connect(self.hass, user_input)
             if not errors:
                 assert info is not None
                 # Verify the controller at the new address is the same physical

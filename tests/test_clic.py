@@ -90,6 +90,33 @@ async def test_config_flow_cannot_connect(hass: HomeAssistant) -> None:
     assert result["errors"] == {"base": "cannot_connect"}
 
 
+@pytest.mark.parametrize(
+    "bad_host",
+    [
+        "",
+        "   ",
+        "not a host!!",
+        "host with spaces",
+        "999.999.999.999",
+        "256.0.0.1",
+    ],
+)
+async def test_config_flow_invalid_host_rejected(
+    hass: HomeAssistant, bad_host: str
+) -> None:
+    """Malformed or out-of-range hosts show invalid_host without connecting."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_HOST: bad_host, CONF_PORT: 80}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    assert CONF_HOST in result["errors"]
+    assert result["errors"][CONF_HOST] == "invalid_host"
+
+
 async def test_config_flow_duplicate_aborts(
     hass: HomeAssistant, fake_server: TestServer
 ) -> None:

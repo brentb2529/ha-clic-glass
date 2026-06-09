@@ -1,7 +1,7 @@
 {
   "domain": "clic",
   "name": "Cardinal CLiC Privacy Glass",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "codeowners": ["@bbensten"],
   "config_flow": true,
   "dependencies": [],

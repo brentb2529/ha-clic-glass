@@ -79,6 +79,7 @@
     "error": {
       "cannot_connect": "Failed to connect to the HC-108. Check the host/IP and that the controller is powered on and reachable.",
       "invalid_auth": "The HC-108 rejected the provided credentials. Check username/password or API token. Default credentials are admin / admin.",
+      "invalid_host": "Invalid host or IP address. Enter a valid hostname or IPv4 address (e.g. 192.168.1.10 or hc108.local).",
       "unknown": "An unexpected error occurred. Check the Home Assistant logs for details."
     },
     "abort": {
